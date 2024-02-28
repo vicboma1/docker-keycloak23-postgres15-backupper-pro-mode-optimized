@@ -1,0 +1,94 @@
+version: '3.9'
+services:
+  postgres:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: ${ADMIN}
+      POSTGRES_USER: ${ADMIN}
+      POSTGRES_DB: ${KEYCLOAK}
+    volumes:
+      - type: bind
+        source: ./storage/postgres
+        target: /var/lib/postgresql/data
+    networks:
+      - net-keycloak
+  
+  keycloak-${ALIAS}:
+    depends_on:
+      - postgres
+    environment:
+      TZ: Europe/Madrid
+      KEYCLOAK_ADMIN: ${ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${ADMIN}
+      KC_DB: ${DB_VENDOR}
+      KC_DB_URL: jdbc:postgresql://postgres/${KEYCLOAK}  # Obligada  
+    image: quay.io/keycloak/keycloak:23.0
+    command:
+      - start
+      - --optimized
+      - --proxy
+      - edge
+      - --db 
+      - ${DB_VENDOR}
+      - --db-url
+      - jdbc:postgresql:/postgres/${KEYCLOAK}
+      - --db-username
+      - ${ADMIN}
+      - --db-password
+      - ${ADMIN}
+      - --https-certificate-file
+      - /opt/jboss/keycloak/config/XXX.com.crt
+      - --https-certificate-key-file
+      - /opt/jboss/keycloak/config/XXX.com.key
+      - --hostname
+      - ${DOMAIN}
+      - --hostname-strict-https
+      - "true"
+      - --hostname-admin-url
+      - https://${DOMAIN}/auth
+      - --http-relative-path
+      - /auth
+    volumes:
+      - ${path}/keycloak/certs/XXX.com.key:/opt/jboss/keycloak/config/XXX.com.key
+      - ${path}/keycloak/certs/XXX.com.crt:/opt/jboss/keycloak/config/XXX.com.crt
+    ports:
+      - "9443:8443"
+      - "9080:8080"
+    networks:
+      - net_keycloak
+    restart: on-failure
+
+    # https://github.com/prodrigestivill/docker-postgres-backup-local
+    # https://pkg.go.dev/github.com/robfig/cron#hdr-Predefined_schedules
+  pgbackups:
+    container_name: local_pgbackups
+    image: prodrigestivill/postgres-backup-local
+    restart: always
+    volumes:
+      - type: bind
+        source: ./backups
+        target: /backups
+    links:
+      - postgres
+    depends_on:
+      - postgres
+    environment:
+      TZ: Europe/Madrid
+      POSTGRES_CLUSTER: true
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+      #  - POSTGRES_PASSWORD_FILE=/run/secrets/db_password <-- alternative for POSTGRES_PASSWORD (to use with docker secrets)
+      POSTGRES_EXTRA_OPTS: -Z6 --schema=public --blobs
+      SCHEDULE: "@every 0h10m00s"
+      BACKUP_KEEP_DAYS: 7
+      BACKUP_KEEP_WEEKS: 4
+      BACKUP_KEEP_MONTHS: 6
+      HEALTHCHECK_PORT: 8080
+    networks:
+     - net-keycloak
+
+networks:
+  net-keycloak:
